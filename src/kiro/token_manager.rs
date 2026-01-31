@@ -53,7 +53,7 @@ impl TokenManager {
     ///
     /// 如果 Token 过期或即将过期，会自动刷新
     pub async fn ensure_valid_token(&mut self) -> anyhow::Result<String> {
-        if is_token_expired(&self.credentials) || is_token_expiring_soon(&self.credentials) {
+        if is_token_expired(&self.credentials) || is_token_expiring_soon(&self.credentials, self.config.token_refresh_minutes) {
             self.credentials =
                 refresh_token(&self.credentials, &self.config, self.proxy.as_ref()).await?;
 
@@ -95,9 +95,9 @@ pub(crate) fn is_token_expired(credentials: &KiroCredentials) -> bool {
     is_token_expiring_within(credentials, 5).unwrap_or(true)
 }
 
-/// 检查 Token 是否即将过期（10分钟内）
-pub(crate) fn is_token_expiring_soon(credentials: &KiroCredentials) -> bool {
-    is_token_expiring_within(credentials, 10).unwrap_or(false)
+/// 检查 Token 是否即将过期（根据配置的分钟数）
+pub(crate) fn is_token_expiring_soon(credentials: &KiroCredentials, minutes: i64) -> bool {
+    is_token_expiring_within(credentials, minutes).unwrap_or(false)
 }
 
 /// 验证 refreshToken 的基本有效性
@@ -744,7 +744,7 @@ impl MultiTokenManager {
         credentials: &KiroCredentials,
     ) -> anyhow::Result<CallContext> {
         // 第一次检查（无锁）：快速判断是否需要刷新
-        let needs_refresh = is_token_expired(credentials) || is_token_expiring_soon(credentials);
+        let needs_refresh = is_token_expired(credentials) || is_token_expiring_soon(credentials, self.config.token_refresh_minutes);
 
         let creds = if needs_refresh {
             // 获取刷新锁，确保同一时间只有一个刷新操作
@@ -760,7 +760,7 @@ impl MultiTokenManager {
                     .ok_or_else(|| anyhow::anyhow!("凭据 #{} 不存在", id))?
             };
 
-            if is_token_expired(&current_creds) || is_token_expiring_soon(&current_creds) {
+            if is_token_expired(&current_creds) || is_token_expiring_soon(&current_creds, self.config.token_refresh_minutes) {
                 // 确实需要刷新
                 let new_creds =
                     refresh_token(&current_creds, &self.config, self.proxy.as_ref()).await?;
@@ -1111,7 +1111,7 @@ impl MultiTokenManager {
         };
 
         // 检查是否需要刷新 token
-        let needs_refresh = is_token_expired(&credentials) || is_token_expiring_soon(&credentials);
+        let needs_refresh = is_token_expired(&credentials) || is_token_expiring_soon(&credentials, self.config.token_refresh_minutes);
 
         let token = if needs_refresh {
             let _guard = self.refresh_lock.lock().await;
@@ -1124,7 +1124,7 @@ impl MultiTokenManager {
                     .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?
             };
 
-            if is_token_expired(&current_creds) || is_token_expiring_soon(&current_creds) {
+            if is_token_expired(&current_creds) || is_token_expiring_soon(&current_creds, self.config.token_refresh_minutes) {
                 let new_creds =
                     refresh_token(&current_creds, &self.config, self.proxy.as_ref()).await?;
                 {
@@ -1332,7 +1332,7 @@ mod tests {
         let mut credentials = KiroCredentials::default();
         let expires = Utc::now() + Duration::minutes(8);
         credentials.expires_at = Some(expires.to_rfc3339());
-        assert!(is_token_expiring_soon(&credentials));
+        assert!(is_token_expiring_soon(&credentials, 10));
     }
 
     #[test]
@@ -1340,7 +1340,7 @@ mod tests {
         let mut credentials = KiroCredentials::default();
         let expires = Utc::now() + Duration::minutes(15);
         credentials.expires_at = Some(expires.to_rfc3339());
-        assert!(!is_token_expiring_soon(&credentials));
+        assert!(!is_token_expiring_soon(&credentials, 10));
     }
 
     #[test]

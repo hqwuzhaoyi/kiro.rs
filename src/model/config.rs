@@ -74,6 +74,15 @@ pub struct Config {
     /// Admin API 密钥（可选，启用 Admin API 功能）
     #[serde(default)]
     pub admin_api_key: Option<String>,
+
+    /// Token 提前刷新时间（分钟），默认 10 分钟
+    /// 当 Token 距离过期时间小于此值时，会自动刷新
+    #[serde(default = "default_token_refresh_minutes")]
+    pub token_refresh_minutes: i64,
+}
+
+fn default_token_refresh_minutes() -> i64 {
+    10
 }
 
 fn default_host() -> String {
@@ -128,6 +137,7 @@ impl Default for Config {
             proxy_username: None,
             proxy_password: None,
             admin_api_key: None,
+            token_refresh_minutes: default_token_refresh_minutes(),
         }
     }
 }
