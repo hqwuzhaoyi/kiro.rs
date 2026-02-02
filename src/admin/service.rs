@@ -8,7 +8,8 @@ use crate::kiro::token_manager::MultiTokenManager;
 use super::error::AdminServiceError;
 use super::types::{
     AddCredentialRequest, AddCredentialResponse, BalanceResponse, CredentialStatusItem,
-    CredentialsStatusResponse,
+    CredentialsStatusResponse, RefreshAllResponse, RefreshResult, RefreshSummary,
+    RefreshTokenResponse,
 };
 
 /// Admin 服务
@@ -153,6 +154,60 @@ impl AdminService {
             .map_err(|e| self.classify_delete_error(e, id))
     }
 
+    /// 强制刷新指定凭据的 Token
+    pub async fn refresh_token(&self, id: u64) -> Result<RefreshTokenResponse, AdminServiceError> {
+        let expires_at = self
+            .token_manager
+            .force_refresh_token(id)
+            .await
+            .map_err(|e| self.classify_refresh_error(e, id))?;
+
+        Ok(RefreshTokenResponse {
+            success: true,
+            message: format!("凭据 #{} Token 已刷新", id),
+            expires_at: Some(expires_at),
+        })
+    }
+
+    /// 批量刷新所有启用凭据的 Token
+    pub async fn refresh_all_tokens(&self) -> RefreshAllResponse {
+        let results = self.token_manager.force_refresh_all().await;
+
+        let refresh_results: Vec<RefreshResult> = results
+            .into_iter()
+            .map(|(id, result)| match result {
+                Ok(expires_at) => RefreshResult {
+                    id,
+                    success: true,
+                    expires_at: Some(expires_at),
+                    error: None,
+                },
+                Err(e) => RefreshResult {
+                    id,
+                    success: false,
+                    expires_at: None,
+                    error: Some(e),
+                },
+            })
+            .collect();
+
+        let succeeded = refresh_results.iter().filter(|r| r.success).count();
+        let failed = refresh_results.len() - succeeded;
+
+        let message = format!("刷新完成：{} 成功，{} 失败", succeeded, failed);
+
+        RefreshAllResponse {
+            success: failed == 0,
+            message,
+            results: refresh_results,
+            summary: RefreshSummary {
+                total: succeeded + failed,
+                succeeded,
+                failed,
+            },
+        }
+    }
+
     /// 分类简单操作错误（set_disabled, set_priority, reset_and_enable）
     fn classify_error(&self, e: anyhow::Error, id: u64) -> AdminServiceError {
         let msg = e.to_string();
@@ -229,6 +284,32 @@ impl AdminService {
             AdminServiceError::InvalidCredential(msg)
         } else {
             AdminServiceError::InternalError(msg)
+        }
+    }
+
+    /// 分类刷新 Token 错误
+    fn classify_refresh_error(&self, e: anyhow::Error, id: u64) -> AdminServiceError {
+        let msg = e.to_string();
+
+        if msg.contains("不存在") {
+            return AdminServiceError::NotFound { id };
+        }
+
+        // 上游服务错误
+        let is_upstream_error = msg.contains("凭证已过期或无效")
+            || msg.contains("权限不足")
+            || msg.contains("已被限流")
+            || msg.contains("服务器错误")
+            || msg.contains("暂时不可用")
+            || msg.contains("error trying to connect")
+            || msg.contains("connection")
+            || msg.contains("timeout")
+            || msg.contains("timed out");
+
+        if is_upstream_error {
+            AdminServiceError::RefreshFailed(msg)
+        } else {
+            AdminServiceError::RefreshFailed(msg)
         }
     }
 }

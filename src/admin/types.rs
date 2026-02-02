@@ -185,3 +185,45 @@ impl AdminErrorResponse {
         Self::new("internal_error", message)
     }
 }
+
+// ============ Token 刷新 ============
+
+/// 单个凭据刷新结果
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshTokenResponse {
+    pub success: bool,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+}
+
+/// 批量刷新中单个凭据的结果
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshResult {
+    pub id: u64,
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// 批量刷新汇总
+#[derive(Debug, Clone, Serialize)]
+pub struct RefreshSummary {
+    pub total: usize,
+    pub succeeded: usize,
+    pub failed: usize,
+}
+
+/// 批量刷新响应
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshAllResponse {
+    pub success: bool,
+    pub message: String,
+    pub results: Vec<RefreshResult>,
+    pub summary: RefreshSummary,
+}

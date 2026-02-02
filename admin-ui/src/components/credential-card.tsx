@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { RefreshCw, ChevronUp, ChevronDown, Wallet, Trash2 } from 'lucide-react'
+import { RefreshCw, ChevronUp, ChevronDown, Wallet, Trash2, RotateCw } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -20,6 +20,7 @@ import {
   useSetPriority,
   useResetFailure,
   useDeleteCredential,
+  useRefreshToken,
 } from '@/hooks/use-credentials'
 
 interface CredentialCardProps {
@@ -42,6 +43,7 @@ export function CredentialCard({ credential, onViewBalance }: CredentialCardProp
   const setPriority = useSetPriority()
   const resetFailure = useResetFailure()
   const deleteCredential = useDeleteCredential()
+  const refreshToken = useRefreshToken()
 
   const handleToggleDisabled = () => {
     setDisabled.mutate(
@@ -96,6 +98,17 @@ export function CredentialCard({ credential, onViewBalance }: CredentialCardProp
       },
       onError: (err) => {
         toast.error('删除失败: ' + (err as Error).message)
+      },
+    })
+  }
+
+  const handleRefreshToken = () => {
+    refreshToken.mutate(credential.id, {
+      onSuccess: (res) => {
+        toast.success(res.message)
+      },
+      onError: (err) => {
+        toast.error('刷新失败: ' + (err as Error).message)
       },
     })
   }
@@ -205,6 +218,15 @@ export function CredentialCard({ credential, onViewBalance }: CredentialCardProp
 
           {/* 操作按钮 */}
           <div className="flex flex-wrap gap-2 pt-2 border-t">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleRefreshToken}
+              disabled={refreshToken.isPending}
+            >
+              <RotateCw className={`h-4 w-4 mr-1 ${refreshToken.isPending ? 'animate-spin' : ''}`} />
+              刷新 Token
+            </Button>
             <Button
               size="sm"
               variant="outline"

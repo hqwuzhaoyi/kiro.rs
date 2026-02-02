@@ -102,3 +102,22 @@ pub async fn delete_credential(
         Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
     }
 }
+
+/// POST /api/admin/credentials/:id/refresh
+/// 强制刷新指定凭据的 Token
+pub async fn refresh_credential_token(
+    State(state): State<AdminState>,
+    Path(id): Path<u64>,
+) -> impl IntoResponse {
+    match state.service.refresh_token(id).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
+    }
+}
+
+/// POST /api/admin/credentials/refresh
+/// 批量刷新所有启用凭据的 Token
+pub async fn refresh_all_tokens(State(state): State<AdminState>) -> impl IntoResponse {
+    let response = state.service.refresh_all_tokens().await;
+    Json(response)
+}

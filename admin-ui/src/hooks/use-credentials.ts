@@ -7,6 +7,8 @@ import {
   getCredentialBalance,
   addCredential,
   deleteCredential,
+  refreshCredentialToken,
+  refreshAllTokens,
 } from '@/api/credentials'
 import type { AddCredentialRequest } from '@/types/api'
 
@@ -80,6 +82,28 @@ export function useDeleteCredential() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (id: number) => deleteCredential(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['credentials'] })
+    },
+  })
+}
+
+// 刷新单个凭据的 Token
+export function useRefreshToken() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => refreshCredentialToken(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['credentials'] })
+    },
+  })
+}
+
+// 批量刷新所有启用凭据的 Token
+export function useRefreshAllTokens() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => refreshAllTokens(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['credentials'] })
     },

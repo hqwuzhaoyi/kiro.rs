@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { RefreshCw, LogOut, Moon, Sun, Server, Plus } from 'lucide-react'
+import { RefreshCw, LogOut, Moon, Sun, Server, Plus, RotateCw } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { storage } from '@/lib/storage'
@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { CredentialCard } from '@/components/credential-card'
 import { BalanceDialog } from '@/components/balance-dialog'
 import { AddCredentialDialog } from '@/components/add-credential-dialog'
-import { useCredentials } from '@/hooks/use-credentials'
+import { useCredentials, useRefreshAllTokens } from '@/hooks/use-credentials'
 
 interface DashboardProps {
   onLogout: () => void
@@ -28,6 +28,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
 
   const queryClient = useQueryClient()
   const { data, isLoading, error, refetch } = useCredentials()
+  const refreshAllTokens = useRefreshAllTokens()
 
   const toggleDarkMode = () => {
     setDarkMode(!darkMode)
@@ -42,6 +43,24 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const handleRefresh = () => {
     refetch()
     toast.success('已刷新凭据列表')
+  }
+
+  const handleRefreshAllTokens = () => {
+    refreshAllTokens.mutate(undefined, {
+      onSuccess: (res) => {
+        toast.success(res.message)
+        if (res.summary.failed > 0) {
+          // 显示失败详情
+          const failedItems = res.results.filter(r => !r.success)
+          failedItems.forEach(item => {
+            toast.error(`凭据 #${item.id} 刷新失败: ${item.error}`)
+          })
+        }
+      },
+      onError: (err) => {
+        toast.error('批量刷新失败: ' + (err as Error).message)
+      },
+    })
   }
 
   const handleLogout = () => {
@@ -144,10 +163,21 @@ export function Dashboard({ onLogout }: DashboardProps) {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-semibold">凭据管理</h2>
-            <Button onClick={() => setAddDialogOpen(true)} size="sm">
-              <Plus className="h-4 w-4 mr-2" />
-              添加凭据
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={handleRefreshAllTokens}
+                size="sm"
+                variant="outline"
+                disabled={refreshAllTokens.isPending || (data?.available || 0) === 0}
+              >
+                <RotateCw className={`h-4 w-4 mr-2 ${refreshAllTokens.isPending ? 'animate-spin' : ''}`} />
+                批量刷新 Token
+              </Button>
+              <Button onClick={() => setAddDialogOpen(true)} size="sm">
+                <Plus className="h-4 w-4 mr-2" />
+                添加凭据
+              </Button>
+            </div>
           </div>
           {data?.credentials.length === 0 ? (
             <Card>

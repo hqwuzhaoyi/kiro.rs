@@ -20,6 +20,9 @@ pub enum AdminServiceError {
 
     /// 凭据无效（验证失败）
     InvalidCredential(String),
+
+    /// Token 刷新失败
+    RefreshFailed(String),
 }
 
 impl fmt::Display for AdminServiceError {
@@ -31,6 +34,7 @@ impl fmt::Display for AdminServiceError {
             AdminServiceError::UpstreamError(msg) => write!(f, "上游服务错误: {}", msg),
             AdminServiceError::InternalError(msg) => write!(f, "内部错误: {}", msg),
             AdminServiceError::InvalidCredential(msg) => write!(f, "凭据无效: {}", msg),
+            AdminServiceError::RefreshFailed(msg) => write!(f, "Token 刷新失败: {}", msg),
         }
     }
 }
@@ -45,6 +49,7 @@ impl AdminServiceError {
             AdminServiceError::UpstreamError(_) => StatusCode::BAD_GATEWAY,
             AdminServiceError::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AdminServiceError::InvalidCredential(_) => StatusCode::BAD_REQUEST,
+            AdminServiceError::RefreshFailed(_) => StatusCode::BAD_GATEWAY,
         }
     }
 
@@ -59,6 +64,7 @@ impl AdminServiceError {
             AdminServiceError::InvalidCredential(_) => {
                 AdminErrorResponse::invalid_request(self.to_string())
             }
+            AdminServiceError::RefreshFailed(_) => AdminErrorResponse::api_error(self.to_string()),
         }
     }
 }

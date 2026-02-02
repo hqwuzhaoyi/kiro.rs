@@ -1284,6 +1284,79 @@ impl MultiTokenManager {
         tracing::info!("已删除凭据 #{}", id);
         Ok(())
     }
+
+    /// 强制刷新指定凭据的 Token（Admin API）
+    ///
+    /// 不检查凭据是否禁用，允许刷新禁用的凭据（方便故障恢复）
+    ///
+    /// # Returns
+    /// - `Ok(String)` - 新的过期时间（RFC3339 格式）
+    /// - `Err(_)` - 凭据不存在或刷新失败
+    pub async fn force_refresh_token(&self, id: u64) -> anyhow::Result<String> {
+        // 1. 获取刷新锁（复用现有锁，避免与自动刷新冲突）
+        let _guard = self.refresh_lock.lock().await;
+
+        // 2. 获取凭据（不检查是否禁用，允许刷新禁用的凭据）
+        let credentials = {
+            let entries = self.entries.lock();
+            entries
+                .iter()
+                .find(|e| e.id == id)
+                .map(|e| e.credentials.clone())
+                .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?
+        };
+
+        // 3. 调用现有 refresh_token() 函数
+        let new_creds = refresh_token(&credentials, &self.config, self.proxy.as_ref()).await?;
+
+        // 4. 更新内存中的凭据
+        {
+            let mut entries = self.entries.lock();
+            if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
+                entry.credentials = new_creds.clone();
+            }
+        }
+
+        // 5. 持久化（复用现有 persist_credentials）
+        self.persist_credentials()?;
+
+        // 6. 返回新的过期时间
+        Ok(new_creds.expires_at.unwrap_or_default())
+    }
+
+    /// 批量刷新所有启用凭据的 Token（Admin API）
+    ///
+    /// 采用顺序执行而非并行，原因：
+    /// 1. 复用同一个 refresh_lock，避免并发刷新导致的竞态
+    /// 2. 对上游服务更友好，避免瞬间大量请求
+    ///
+    /// 只处理未禁用的凭据，已禁用的凭据会被跳过
+    pub async fn force_refresh_all(&self) -> Vec<(u64, Result<String, String>)> {
+        // 获取所有启用的凭据 ID
+        let ids: Vec<u64> = {
+            let entries = self.entries.lock();
+            entries
+                .iter()
+                .filter(|e| !e.disabled)
+                .map(|e| e.id)
+                .collect()
+        };
+
+        let mut results = Vec::new();
+
+        for id in ids {
+            match self.force_refresh_token(id).await {
+                Ok(expires_at) => {
+                    results.push((id, Ok(expires_at)));
+                }
+                Err(e) => {
+                    results.push((id, Err(e.to_string())));
+                }
+            }
+        }
+
+        results
+    }
 }
 
 #[cfg(test)]
