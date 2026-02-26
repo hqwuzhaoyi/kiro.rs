@@ -8,7 +8,10 @@ use axum::{
 
 use super::{
     middleware::AdminState,
-    types::{AddCredentialRequest, SetDisabledRequest, SetPriorityRequest, SuccessResponse},
+    types::{
+        AddCredentialRequest, SetDisabledRequest, SetLoadBalancingModeRequest, SetPriorityRequest,
+        SuccessResponse,
+    },
 };
 
 /// GET /api/admin/credentials
@@ -103,21 +106,21 @@ pub async fn delete_credential(
     }
 }
 
-/// POST /api/admin/credentials/:id/refresh
-/// 强制刷新指定凭据的 Token
-pub async fn refresh_credential_token(
+/// GET /api/admin/config/load-balancing
+/// 获取负载均衡模式
+pub async fn get_load_balancing_mode(State(state): State<AdminState>) -> impl IntoResponse {
+    let response = state.service.get_load_balancing_mode();
+    Json(response)
+}
+
+/// PUT /api/admin/config/load-balancing
+/// 设置负载均衡模式
+pub async fn set_load_balancing_mode(
     State(state): State<AdminState>,
-    Path(id): Path<u64>,
+    Json(payload): Json<SetLoadBalancingModeRequest>,
 ) -> impl IntoResponse {
-    match state.service.refresh_token(id).await {
+    match state.service.set_load_balancing_mode(payload) {
         Ok(response) => Json(response).into_response(),
         Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
     }
-}
-
-/// POST /api/admin/credentials/refresh
-/// 批量刷新所有启用凭据的 Token
-pub async fn refresh_all_tokens(State(state): State<AdminState>) -> impl IntoResponse {
-    let response = state.service.refresh_all_tokens().await;
-    Json(response)
 }

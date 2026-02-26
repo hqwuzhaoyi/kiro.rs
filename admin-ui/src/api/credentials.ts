@@ -8,8 +8,6 @@ import type {
   SetPriorityRequest,
   AddCredentialRequest,
   AddCredentialResponse,
-  RefreshTokenResponse,
-  RefreshAllResponse,
 } from '@/types/api'
 
 // 创建 axios 实例
@@ -87,14 +85,14 @@ export async function deleteCredential(id: number): Promise<SuccessResponse> {
   return data
 }
 
-// 刷新单个凭据的 Token
-export async function refreshCredentialToken(id: number): Promise<RefreshTokenResponse> {
-  const { data } = await api.post<RefreshTokenResponse>(`/credentials/${id}/refresh`)
+// 获取负载均衡模式
+export async function getLoadBalancingMode(): Promise<{ mode: 'priority' | 'balanced' }> {
+  const { data } = await api.get<{ mode: 'priority' | 'balanced' }>('/config/load-balancing')
   return data
 }
 
-// 批量刷新所有启用凭据的 Token
-export async function refreshAllTokens(): Promise<RefreshAllResponse> {
-  const { data } = await api.post<RefreshAllResponse>('/credentials/refresh')
+// 设置负载均衡模式
+export async function setLoadBalancingMode(mode: 'priority' | 'balanced'): Promise<{ mode: 'priority' | 'balanced' }> {
+  const { data } = await api.put<{ mode: 'priority' | 'balanced' }>('/config/load-balancing', { mode })
   return data
 }

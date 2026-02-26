@@ -8,8 +8,8 @@ use axum::{
 use super::{
     handlers::{
         add_credential, delete_credential, get_all_credentials, get_credential_balance,
-        refresh_all_tokens, refresh_credential_token, reset_failure_count,
-        set_credential_disabled, set_credential_priority,
+        get_load_balancing_mode, reset_failure_count, set_credential_disabled,
+        set_credential_priority, set_load_balancing_mode,
     },
     middleware::{AdminState, admin_auth_middleware},
 };
@@ -19,13 +19,13 @@ use super::{
 /// # 端点
 /// - `GET /credentials` - 获取所有凭据状态
 /// - `POST /credentials` - 添加新凭据
-/// - `POST /credentials/refresh` - 批量刷新所有启用凭据的 Token
 /// - `DELETE /credentials/:id` - 删除凭据
 /// - `POST /credentials/:id/disabled` - 设置凭据禁用状态
 /// - `POST /credentials/:id/priority` - 设置凭据优先级
 /// - `POST /credentials/:id/reset` - 重置失败计数
-/// - `POST /credentials/:id/refresh` - 刷新指定凭据的 Token
 /// - `GET /credentials/:id/balance` - 获取凭据余额
+/// - `GET /config/load-balancing` - 获取负载均衡模式
+/// - `PUT /config/load-balancing` - 设置负载均衡模式
 ///
 /// # 认证
 /// 需要 Admin API Key 认证，支持：
@@ -37,15 +37,15 @@ pub fn create_admin_router(state: AdminState) -> Router {
             "/credentials",
             get(get_all_credentials).post(add_credential),
         )
-        // 注意：/credentials/refresh 必须在 /credentials/{id} 之前，
-        // 避免 "refresh" 被误解析为 id
-        .route("/credentials/refresh", post(refresh_all_tokens))
         .route("/credentials/{id}", delete(delete_credential))
         .route("/credentials/{id}/disabled", post(set_credential_disabled))
         .route("/credentials/{id}/priority", post(set_credential_priority))
         .route("/credentials/{id}/reset", post(reset_failure_count))
-        .route("/credentials/{id}/refresh", post(refresh_credential_token))
         .route("/credentials/{id}/balance", get(get_credential_balance))
+        .route(
+            "/config/load-balancing",
+            get(get_load_balancing_mode).put(set_load_balancing_mode),
+        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             admin_auth_middleware,

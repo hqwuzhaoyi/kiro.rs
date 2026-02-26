@@ -7,8 +7,8 @@ import {
   getCredentialBalance,
   addCredential,
   deleteCredential,
-  refreshCredentialToken,
-  refreshAllTokens,
+  getLoadBalancingMode,
+  setLoadBalancingMode,
 } from '@/api/credentials'
 import type { AddCredentialRequest } from '@/types/api'
 
@@ -88,24 +88,21 @@ export function useDeleteCredential() {
   })
 }
 
-// 刷新单个凭据的 Token
-export function useRefreshToken() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (id: number) => refreshCredentialToken(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['credentials'] })
-    },
+// 获取负载均衡模式
+export function useLoadBalancingMode() {
+  return useQuery({
+    queryKey: ['loadBalancingMode'],
+    queryFn: getLoadBalancingMode,
   })
 }
 
-// 批量刷新所有启用凭据的 Token
-export function useRefreshAllTokens() {
+// 设置负载均衡模式
+export function useSetLoadBalancingMode() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: () => refreshAllTokens(),
+    mutationFn: setLoadBalancingMode,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['credentials'] })
+      queryClient.invalidateQueries({ queryKey: ['loadBalancingMode'] })
     },
   })
 }

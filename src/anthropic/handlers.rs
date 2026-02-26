@@ -2,6 +2,7 @@
 
 use std::convert::Infallible;
 
+use anyhow::Error;
 use crate::kiro::model::events::Event;
 use crate::kiro::model::requests::kiro::KiroRequest;
 use crate::kiro::parser::decoder::EventStreamDecoder;
@@ -23,10 +24,48 @@ use uuid::Uuid;
 use super::converter::{ConversionError, convert_request};
 use super::middleware::AppState;
 use super::stream::{BufferedStreamContext, SseEvent, StreamContext};
-use super::types::{
-    CountTokensRequest, CountTokensResponse, ErrorResponse, MessagesRequest, Model, ModelsResponse,
-};
+use super::types::{CountTokensRequest, CountTokensResponse, ErrorResponse, MessagesRequest, Model, ModelsResponse, OutputConfig, Thinking};
 use super::websearch;
+
+/// 将 KiroProvider 错误映射为 HTTP 响应
+fn map_provider_error(err: Error) -> Response {
+    let err_str = err.to_string();
+
+    // 上下文窗口满了（对话历史累积超出模型上下文窗口限制）
+    if err_str.contains("CONTENT_LENGTH_EXCEEDS_THRESHOLD") {
+        tracing::warn!(error = %err, "上游拒绝请求：上下文窗口已满（不应重试）");
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::new(
+                "invalid_request_error",
+                "Context window is full. Reduce conversation history, system prompt, or tools.",
+            )),
+        )
+            .into_response();
+    }
+
+    // 单次输入太长（请求体本身超出上游限制）
+    if err_str.contains("Input is too long") {
+        tracing::warn!(error = %err, "上游拒绝请求：输入过长（不应重试）");
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::new(
+                "invalid_request_error",
+                "Input is too long. Reduce the size of your messages.",
+            )),
+        )
+            .into_response();
+    }
+    tracing::error!("Kiro API 调用失败: {}", err);
+    (
+        StatusCode::BAD_GATEWAY,
+        Json(ErrorResponse::new(
+            "api_error",
+            format!("上游 API 调用失败: {}", err),
+        )),
+    )
+        .into_response()
+}
 
 /// GET /v1/models
 ///
@@ -45,6 +84,15 @@ pub async fn get_models() -> impl IntoResponse {
             max_tokens: 32000,
         },
         Model {
+            id: "claude-sonnet-4-5-20250929-thinking".to_string(),
+            object: "model".to_string(),
+            created: 1727568000,
+            owned_by: "anthropic".to_string(),
+            display_name: "Claude Sonnet 4.5 (Thinking)".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 32000,
+        },
+        Model {
             id: "claude-opus-4-5-20251101".to_string(),
             object: "model".to_string(),
             created: 1730419200,
@@ -54,11 +102,65 @@ pub async fn get_models() -> impl IntoResponse {
             max_tokens: 32000,
         },
         Model {
+            id: "claude-opus-4-5-20251101-thinking".to_string(),
+            object: "model".to_string(),
+            created: 1730419200,
+            owned_by: "anthropic".to_string(),
+            display_name: "Claude Opus 4.5 (Thinking)".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 32000,
+        },
+        Model {
+            id: "claude-sonnet-4-6".to_string(),
+            object: "model".to_string(),
+            created: 1770314400,
+            owned_by: "anthropic".to_string(),
+            display_name: "Claude Sonnet 4.6".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 32000,
+        },
+        Model {
+            id: "claude-sonnet-4-6-thinking".to_string(),
+            object: "model".to_string(),
+            created: 1770314400,
+            owned_by: "anthropic".to_string(),
+            display_name: "Claude Sonnet 4.6 (Thinking)".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 32000,
+        },
+        Model {
+            id: "claude-opus-4-6".to_string(),
+            object: "model".to_string(),
+            created: 1770314400,
+            owned_by: "anthropic".to_string(),
+            display_name: "Claude Opus 4.6".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 32000,
+        },
+        Model {
+            id: "claude-opus-4-6-thinking".to_string(),
+            object: "model".to_string(),
+            created: 1770314400,
+            owned_by: "anthropic".to_string(),
+            display_name: "Claude Opus 4.6 (Thinking)".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 32000,
+        },
+        Model {
             id: "claude-haiku-4-5-20251001".to_string(),
             object: "model".to_string(),
             created: 1727740800,
             owned_by: "anthropic".to_string(),
             display_name: "Claude Haiku 4.5".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 32000,
+        },
+        Model {
+            id: "claude-haiku-4-5-20251001-thinking".to_string(),
+            object: "model".to_string(),
+            created: 1727740800,
+            owned_by: "anthropic".to_string(),
+            display_name: "Claude Haiku 4.5 (Thinking)".to_string(),
             model_type: "chat".to_string(),
             max_tokens: 32000,
         },
@@ -75,7 +177,7 @@ pub async fn get_models() -> impl IntoResponse {
 /// 创建消息（对话）
 pub async fn post_messages(
     State(state): State<AppState>,
-    JsonExtractor(payload): JsonExtractor<MessagesRequest>,
+    JsonExtractor(mut payload): JsonExtractor<MessagesRequest>,
 ) -> Response {
     tracing::info!(
         model = %payload.model,
@@ -99,6 +201,9 @@ pub async fn post_messages(
                 .into_response();
         }
     };
+
+    // 检测模型名是否包含 "thinking" 后缀，若包含则覆写 thinking 配置
+    override_thinking_from_model_name(&mut payload);
 
     // 检查是否为 WebSearch 请求
     if websearch::has_web_search_tool(&payload) {
@@ -171,7 +276,7 @@ pub async fn post_messages(
     let thinking_enabled = payload
         .thinking
         .as_ref()
-        .map(|t| t.thinking_type == "enabled")
+        .map(|t| t.is_enabled())
         .unwrap_or(false);
 
     if payload.stream {
@@ -201,17 +306,7 @@ async fn handle_stream_request(
     // 调用 Kiro API（支持多凭据故障转移）
     let response = match provider.call_api_stream(request_body).await {
         Ok(resp) => resp,
-        Err(e) => {
-            tracing::error!("Kiro API 调用失败: {}", e);
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(ErrorResponse::new(
-                    "api_error",
-                    format!("上游 API 调用失败: {}", e),
-                )),
-            )
-                .into_response();
-        }
+        Err(e) => return map_provider_error(e),
     };
 
     // 创建流处理上下文
@@ -346,17 +441,7 @@ async fn handle_non_stream_request(
     // 调用 Kiro API（支持多凭据故障转移）
     let response = match provider.call_api(request_body).await {
         Ok(resp) => resp,
-        Err(e) => {
-            tracing::error!("Kiro API 调用失败: {}", e);
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(ErrorResponse::new(
-                    "api_error",
-                    format!("上游 API 调用失败: {}", e),
-                )),
-            )
-                .into_response();
-        }
+        Err(e) => return map_provider_error(e),
     };
 
     // 读取响应体
@@ -411,14 +496,18 @@ async fn handle_non_stream_request(
 
                             // 如果是完整的工具调用，添加到列表
                             if tool_use.stop {
-                                let input: serde_json::Value = serde_json::from_str(buffer)
-                                    .unwrap_or_else(|e| {
-                                        tracing::warn!(
-                                            "工具输入 JSON 解析失败: {}, tool_use_id: {}, 原始内容: {}",
-                                            e, tool_use.tool_use_id, buffer
-                                        );
-                                        serde_json::json!({})
-                                    });
+                                let input: serde_json::Value = if buffer.is_empty() {
+                                    serde_json::json!({})
+                                } else {
+                                    serde_json::from_str(buffer)
+                                        .unwrap_or_else(|e| {
+                                            tracing::warn!(
+                                                "工具输入 JSON 解析失败: {}, tool_use_id: {}",
+                                                e, tool_use.tool_use_id
+                                            );
+                                            serde_json::json!({})
+                                        })
+                                };
 
                                 tool_uses.push(json!({
                                     "type": "tool_use",
@@ -436,6 +525,10 @@ async fn handle_non_stream_request(
                                 / 100.0)
                                 as i32;
                             context_input_tokens = Some(actual_input_tokens);
+                            // 上下文使用量达到 100% 时，设置 stop_reason 为 model_context_window_exceeded
+                            if context_usage.context_usage_percentage >= 100.0 {
+                                stop_reason = "model_context_window_exceeded".to_string();
+                            }
                             tracing::debug!(
                                 "收到 contextUsageEvent: {}%, 计算 input_tokens: {}",
                                 context_usage.context_usage_percentage,
@@ -498,6 +591,44 @@ async fn handle_non_stream_request(
     (StatusCode::OK, Json(response_body)).into_response()
 }
 
+/// 检测模型名是否包含 "thinking" 后缀，若包含则覆写 thinking 配置
+///
+/// - Opus 4.6：覆写为 adaptive 类型
+/// - 其他模型：覆写为 enabled 类型
+/// - budget_tokens 固定为 20000
+fn override_thinking_from_model_name(payload: &mut MessagesRequest) {
+    let model_lower = payload.model.to_lowercase();
+    if !model_lower.contains("thinking") {
+        return;
+    }
+
+    let is_opus_4_6 =
+        model_lower.contains("opus") && (model_lower.contains("4-6") || model_lower.contains("4.6"));
+
+    let thinking_type = if is_opus_4_6 {
+        "adaptive"
+    } else {
+        "enabled"
+    };
+
+    tracing::info!(
+        model = %payload.model,
+        thinking_type = thinking_type,
+        "模型名包含 thinking 后缀，覆写 thinking 配置"
+    );
+
+    payload.thinking = Some(Thinking {
+        thinking_type: thinking_type.to_string(),
+        budget_tokens: 20000,
+    });
+    
+    if is_opus_4_6 {
+        payload.output_config = Some(OutputConfig {
+            effort: "high".to_string(),
+        });
+    }
+}
+
 /// POST /v1/messages/count_tokens
 ///
 /// 计算消息的 token 数量
@@ -529,7 +660,7 @@ pub async fn count_tokens(
 /// - message_start 中的 input_tokens 是从 contextUsageEvent 计算的准确值
 pub async fn post_messages_cc(
     State(state): State<AppState>,
-    JsonExtractor(payload): JsonExtractor<MessagesRequest>,
+    JsonExtractor(mut payload): JsonExtractor<MessagesRequest>,
 ) -> Response {
     tracing::info!(
         model = %payload.model,
@@ -554,6 +685,9 @@ pub async fn post_messages_cc(
                 .into_response();
         }
     };
+
+    // 检测模型名是否包含 "thinking" 后缀，若包含则覆写 thinking 配置
+    override_thinking_from_model_name(&mut payload);
 
     // 检查是否为 WebSearch 请求
     if websearch::has_web_search_tool(&payload) {
@@ -626,7 +760,7 @@ pub async fn post_messages_cc(
     let thinking_enabled = payload
         .thinking
         .as_ref()
-        .map(|t| t.thinking_type == "enabled")
+        .map(|t| t.is_enabled())
         .unwrap_or(false);
 
     if payload.stream {
@@ -659,17 +793,7 @@ async fn handle_stream_request_buffered(
     // 调用 Kiro API（支持多凭据故障转移）
     let response = match provider.call_api_stream(request_body).await {
         Ok(resp) => resp,
-        Err(e) => {
-            tracing::error!("Kiro API 调用失败: {}", e);
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(ErrorResponse::new(
-                    "api_error",
-                    format!("上游 API 调用失败: {}", e),
-                )),
-            )
-                .into_response();
-        }
+        Err(e) => return map_provider_error(e),
     };
 
     // 创建缓冲流处理上下文
