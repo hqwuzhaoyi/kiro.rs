@@ -365,6 +365,28 @@ kiro-rs/
 RUST_LOG=debug ./target/release/kiro-rs
 ```
 
+## 辅助工具
+
+### convert-credentials
+
+将扩展格式的凭据 JSON（如从 Admin API 导出的格式）转换为标准 `credentials.json` 格式。
+
+```bash
+# 编译工具
+cargo build --release --bin convert-credentials
+
+# 从文件转换
+./target/release/convert-credentials input.json > credentials.json
+
+# 从管道转换
+cat input.json | ./target/release/convert-credentials > credentials.json
+```
+
+该工具会：
+- 保留必要字段：`accessToken`, `refreshToken`, `profileArn`, `expiresAt`, `authMethod`
+- 保留可选字段（如果存在）：`clientId`, `clientSecret`, `region`, `machineId`, `priority`
+- 自动移除不需要的字段：`email`, `currentUsage`, `remaining`, `subscriptionTitle`, `provider`, `importedAt`, `nextResetAt`, `id` 等
+
 ## 注意事项
 
 1. **凭证安全**: 请妥善保管 `credentials.json` 文件，不要提交到版本控制
